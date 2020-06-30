@@ -1,0 +1,470 @@
+= Reference of <jv/utils/bounded-poly.hpp>
+Julien Vernay
+2020-06-25
+// Metadata
+:description: This document refers all the entities defined in the header <jv/utils/bounded-poly.hpp>.
+// Settings
+:icons: font
+:source-highlighter: pygments
+:pygments-style: tango
+:toc: left
+:toc-title: Entities
+:toclevels: 4
+:table-caption!:
+// Refs
+:SourceFile: src/jv/bounded-poly.hpp
+:cppref-TrivialType: link:https://en.cppreference.com/w/cpp/named_req/TrivialType[TrivialType]
+
+This is the reference page for `jv::BoundedPoly`.
+To see the summary and examples, go there: <<README.adoc#>>.
+
+== Concepts
+
+[#is_storable]
+=== jv::**is_storable**
+.Interface
+[source,cpp]
+----
+template <typename T, typename Storage>
+struct is_storable {
+    static constexpr bool value = ...;
+};
+
+template <typename T, typename Storage>
+constexpr bool is_storable_v = is_storable<T, Storage>::value;
+----
+
+.Abstract
+Type trait that checks if we can store `T` in `Storage`.
+It provides the constant boolean. member `value` as a result.
+`is_storable_v` is provided as an helper.
+
+.Parameters
+[%autowidth]
+|===
+| Parameter | Description
+
+| *T* : _typename_ | The type we want to store
+
+| *Storage* : _typename_ | The type we want to store into
+|===
+
+.Description
+`value = true` if and only if the following properties are true:
+
+* `Storage` meets the ``{cppref-TrivialType}`` requirement
+* `T` is aligned on `Storage` (= `alignof(Storage)` is a multiple of `alignof(T)`)
+* `T` is smaller than `Storage` (= `sizeof(T) <= sizeof(Storage)`)
+
+'''
+
+[#is_movable]
+=== jv::**is_movable**
+.Interface
+[source,cpp]
+----
+template <typename T, typename Mover, typename A>
+struct is_movable {
+    static constexpr bool value = ...;
+};
+
+template <typename T, typename Mover, typename A>
+constexpr bool is_movable_v = is_movable<T, Storage>::value;
+----
+
+.Abstract
+Given a `Mover` that abstracts the move operation on `T`, checks if it can handle `A`.
+The abstraction of move operations is provided by invoking `Mover` with `(T&& src, void* dst)`.
+It provides the constant boolean. member `value` as a result.
+`is_movable_v` is provided as an helper.
+
+[%autowidth]
+.Parameters
+|===
+|Parameter  | Description
+
+|*T* : _typename_ | The type we want to abstract
+
+|*Mover* : _typename_ | The type that must provide a move operation for *T*
+
+|*A* : _typename_ | The type we want to move with the abstraction provided by *Mover*
+|===
+
+.Description
+`Mover` must provide an abstraction of a move operation on `T`, and `A` must be abstractable using this abstraction. This means:
+
+* `Mover` must be nothrow destructible.
+* `Mover` must be invocable with the signature `void(T&& src, void* dst) noexcept`.
++
+[NOTE]
+====
+* It must construct-move an `A` from `src` into `dst`. For instance: `new (dst) A((A&&)src)`.
+* It must always succeed: you cannot throw an exception (*noexcept*) nor return an error code (*void*).
+====
+* If `Mover` is not empty (= `Mover` is a stateful mover):
+** Must provide constructor `Mover(A const*) noexcept`.
++
+NOTE: It will be called with `nullptr`. Only the type of the argument is relevant. This lets the `Mover` know which type it will move.
+** Must be nothrow copyable.
+
+.Example
+We want every implementation of the interface `Interface` being movable using `Mover`.
+Moving is inherently dependent of the true class moved, so we need to create a polymorphic method to let derived implementation customize how they must be moved.
+[source,c++]
+----
+struct Interface {
+    virtual ~Interface() {}
+    virtual void move_to(void* dst) && noexcept = 0;
+    ... 
+};
+struct Mover {
+    void operator()(Interface&& src, void* dst) noexcept {
+        src.move_to(dst);
+    }
+};
+----
+Then, each derived implementation must implement `move_to`.
+Note that the implementation is similar for every derived class.
+[source,c++]
+----
+struct Derived : Interface {
+    void move_to(void* dst) && noexcept {
+        new (dst) Derived(std::move(*this));
+    }
+};
+----
+
+NOTE: `is_movable<Interface, Mover, Derived>` is `true`.
+
+'''
+
+== Types
+
+[#UniversalMover]
+=== jv::**UniversalMover**
+.Interface
+[source,cpp]
+----
+template <typename T>
+class UniversalMover {
+  public:
+
+    template <typename A>
+    constexpr UniversalMover(A const*) noexcept;
+    
+    constexpr void operator()(T&& src, void* dst) const noexcept;
+};
+----
+
+.Abstract
+Stateful Mover that can handle any type `A` derived from `T`.
+Internally, holds a function pointer to an `A`-specific function.
+Satisfies `<<is_movable>><T, UniversalMover<T>, A>`.
+
+.Parameters
+[%autowidth]
+|===
+|Parameter|Precondition|Description
+
+|*T* : _typename_ | None | The type we want to abstract the move of its child classes.
+|===
+
+'''
+
+[#VirtualMover]
+=== jv::**VirtualMover**
+.Interface
+[source,cpp]
+----
+template <typename T; void (T::*Method)(void*)&& noexcept>
+class VirtualMover {
+  public:
+    constexpr void operator()(T&& src, void* dst) const noexcept;
+};
+----
+
+.Abstract
+Stateless Mover that invoke a polymorphic method of `T` that must be redefined by any derived class `A`.
+Satisfies `<<is_movable>><T, VirtualMover<T>, A>`.
+
+.Parameters
+[%autowidth]
+|===
+|Parameter | Description
+
+|*T* : _typename_ | The type we want to abstract the move of its child classes.
+
+|*Method*: pointer to a member function of `T`, of signature `void(void*) && noexcept` | The method we must call to move the value.
+|===
+
+'''
+
+[#BoundedPoly]
+=== jv::**BoundedPoly**
+.Interface
+[source,cpp]
+----
+template <typename Storage, typename Base, typename Mover = UniversalMover<Base>>
+class BoundedPoly {
+  public:
+    Base& get() noexcept;
+    Base const& get() const noexcept;
+};
+----
+
+.Abstract
+Type abstractor for polymorphic instances of `Base`, stored on stack in `Storage`, using `Mover` to perform move operations.
+
+.Parameters
+[%autowidth]
+|===
+| Parameter | Precondition | Description
+
+| *Storage* : _typename_ | ``{cppref-TrivialType}`` | The type in which the instances are stored.
+
+| *Base* : _typename_ | `std::is_nothrow_destructible && std::has_virtual_destructor` | The polymorphic common base of the instances stored in BoundedPoly.
+
+| *Mover* : _typename_ | `std::is_nothrow_destructible` and can be called with the signature `void(Base&&, void*) noexcept` | The abstractor of move operations.
+|===
+
+.Description
+`BoundedPoly` provides an abstraction of derived classes of `Base`. 
+Its size is `sizeof(Storage) + sizeof(Mover)` (+ potentially some padding to keep them aligned).
+Unline `std::any`, `std::variant` and `std::unique_ptr`, it is guaranteed that `BoundedPoly` has no empty state. 
+This allows us to not test for empty state before doing stuff in methods, but it requires that move operations on stored values do not throw.
+
+`Mover` is provided as a customization point.
+Ideally, `Base` should provide a virtual method `move_to(void*) && noexcept`.
+So the move call is dispatched using polymorphism.
+In this case, the mover would be `[](Base&& src, void* dst) noexcept { src.move_to(dst); }`. Such a `Mover` is stateless: it only redirects to the correct virtual method.
+
+But on existing hierarchies, it may be impossible to add such a method.
+For these cases, stateful `Mover` exist
+For instance `UniversalMover<Base>` stores as state a function pointer to `void(Base&&,void*) noexcept`.
+It changes depending on the actual type stored.
+This adds an extra cost (a function pointer stored) so it is preferable to use a stateless `Mover` that calls a virtual method.
+
+'''
+
+[#BoundedPoly-can_handle]
+==== BoundedPoly::**can_handle**
+.Interface
+[source,cpp]
+----
+template <typename T>
+struct can_handle {
+    static constexpr bool value = ...;
+};
+
+template <typename T>
+static constexpr bool can_handle_v = can_handle<T>::value;
+----
+
+.Description
+Check if `T` can be handled by `BoundedPoly<Storage, Base, Mover>`.
+It is `true` if and only if `T` satisfies:
+
+* `std::is_nothrow_move_constructible<T>`
+* `std::is_base_of<Base, T>`
+* `<<is_movable>><Base, Mover, T>`
+* `<<is_storable>><T, Storage>`
+
+'''
+
+[#BoundedPoly-BoundedPoly]
+==== BoundedPoly::**BoundedPoly**
+.Interface
+[source,cpp]
+----
+template<typename Derived>
+BoundedPoly(Derived&& derived); // <1>
+
+template <typename Derived, typename... Args>
+BoundedPoly(std::in_place_type_t<Derived>, Args&&... args); // <2>
+
+BoundedPoly(BoundedPoly const&) = delete; // <3>
+
+BoundedPoly(BoundedPoly&& other) noexcept; // <4>
+----
+
+.Descrîption
+[options="autowidth"]
+|===
+
+2+h| 1. Construct from the argument into the internal storage.
+
+| **Requirements** a| 
+* `<<BoundedPoly-can_handle>><Derived>`
+
+| **Throws** | If `Mover` is non-empty and `Mover(Derived const*)` throws, or if `Derived(derived)` throws (for instance copy-constructor if `derived` is a _lvalue_).
+
+2+h| 2. Construct directly in the storage `Derived` from `Args`.
+
+| **Requirements** a|
+* `std::is_constructible<Derived, Args...>`
+* `<<BoundedPoly-can_handle>><Derived>`
+
+| **Throws** a| Either if `Mover` is non-empty and `Mover(Derivec const*)` throws, or if `Derived(args...)` throws.
+
+2+h| 3. Copy construction is deleted.
+
+2+h| 4. Move construction.
+
+| **Note** | The `Mover` is copied.
+
+|===
+
+'''
+
+[#BoundedPoly-operator=]
+==== BoundedPoly::**operator=**
+.Interface
+[source,cpp]
+----
+template <typename Derived>
+auto operator=(Derived derived) noexcept -> BoundedPoly&; // <1>
+
+auto operator=(BoundedPoly const&) -> BoundedPoly& = delete; // <2>
+
+auto operator=(BoundedPoly&& other) noexcept -> BoundedPoly&; // <3>
+----
+
+.Descrîption
+[options="autowidth"]
+|===
+
+2+h| 1. Construct from the argument into the internal storage.
+
+| **Requirements** a| 
+* `<<BoundedPoly-can_handle>><Derived>`
+
+| **Throws** a| If `Mover` is non-empty and `Mover(Derived const*)` throws.
+
+NOTE: *Strong exception safety*: the instance is not modified if an exception is thrown.
+
+2+h| 2. Copy assignment is deleted.
+
+2+h| 3. Move assignment.
+
+| **Note** | The `Mover` is copied.
+
+|===
+
+'''
+
+[#BoundedPoly-~BoundedPoly]
+==== BoundedPoly::**~BoundedPoly**
+.Interface
+[source,cpp]
+----
+~BoundedPoly() noexcept;
+----
+.Descrîption
+Destroys the stored value.
+
+'''
+
+[#BoundedPoly-emplace]
+==== BoundedPoly::**emplace**
+.Interface
+[source,cpp]
+----
+template <typename Derived, typename... Args>
+void emplace(Args&&... args) noexcept;
+----
+
+.Descrîption
+[options="autowidth"]
+|===
+2+| Construct `Derived` into the internal storage using the provided arguments.
+
+| **Requirements** a| 
+* `<<BoundedPoly-can_handle>><Derived>`
+* `std::is_nothrow_constructible_v<Derived, Args...>`
+
+| **Throws** a| If `Mover` is non-empty and `Mover(Derived const*)` throws.
+
+NOTE: *Strong exception safety*: the instance is not modified if an exception is thrown.
+
+|===
+
+'''
+
+[#BoundedPoly-get]
+==== BoundedPoly::**get**
+.Interface
+[source,cpp]
+----
+auto get() noexcept -> Base&;
+auto get() const noexcept -> Base const&;
+----
+.Descrîption
+Returns a reference to the stored value.
+
+'''
+
+[#BoundedPoly-operator*]
+==== BoundedPoly::**pass:c[operator*]**
+.Interface
+[source,cpp]
+----
+auto operator*() noexcept -> Base&;
+auto operator*() const noexcept -> Base const&;
+----
+.Descrîption
+Returns a reference to the stored value.
+
+'''
+
+[#BoundedPoly-operator->]
+==== BoundedPoly::**pass:c[operator->]**
+.Interface
+[source,cpp]
+----
+auto operator->() noexcept -> Base*;
+auto operator->() const noexcept -> Base const*;
+----
+.Descrîption
+Dereferences a member of `Base`.
+
+'''
+
+[#BoundedPoly-swap]
+==== BoundedPoly::**swap**
+.Interface
+[source,cpp]
+----
+void swap(BoundedPoly& other) noexcept;
+----
+.Descrîption
+Exchanges stored value with `other`.
+
+'''
+
+[#BoundedPolyVM]
+=== jv::**BoundedPolyVM**
+.Interface
+[source,cpp]
+----
+template <typename Storage, typename IBase,
+          void (IBase::*Method)(void* dst)&& noexcept>
+using BoundedPolyVM = BoundedPoly<Storage, IBase, VirtualMover<IBase, Method>>;
+----
+
+.Abstract
+Helper alias of `BoundedPoly` which takes a virtual method as a Mover.
+
+.Parameters
+[%autowidth]
+|===
+|Parameter | Description
+
+|*Storage* : _typename_ | ``{cppref-TrivialType}`` | The type in which the instances are stored.
+
+|*Base* : _typename_ | `std::is_nothrow_destructible && std::has_virtual_destructor` | The polymorphic common base of the instances stored in BoundedPoly.
+
+|*Method*: pointer to a member function of `Base`, of signature `void(void*) && noexcept` | `!= nullptr` | The method we must call to move the value.
+
+|===
+
+

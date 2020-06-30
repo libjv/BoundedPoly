@@ -1,0 +1,149 @@
+= BoundedPoly
+Julien Vernay
+2020-06-25
+// Metadata
+:description: This documents the BoundedPoly templated class.
+// Settings
+:icons: font
+:source-highlighter: pygments
+:pygments-style: tango
+:toc: left
+:toclevels: 4
+:table-caption!:
+// Refs
+:SourceFile: src/jv/bounded-poly.hpp
+:Example1: examples/bounded-poly/shape.cpp
+
+== Abstract
+`BoundedPoly<Storage, Base, Mover = ...>` is a type abstractor.
+It stores any no-throw movable polymorphic derived class of `Base` that fits into size and alignment of `Storage`.
+It provides semantics similar to `std::unique_ptr<Base>` and `std::variant<...>`:
+
+- The memory is owned by the instance (like both, and unlike `std::reference_wrapper<Base>`).
+- The type can change over time (like both).
+- The actual type of the stored value is not known (like `unique_ptr`).
+- The set of accepted types is not closed (line `unique_ptr` and unline `variant`).
+- It is allocated on the stack (like `variant`).
+- It cannot be empty, even when exceptions are thrown (like `variant`, but greater guarantee).
+
+This allows to use both polymorphic-semantics and stack-allocation (and so, cache-friendlyness).
+
+== Examples
+
+=== Shape
+
+.IShape
+[source,cpp]
+----
+include::{Example1}[tag=IShape]
+----
+We first create an interface named `IShape`.
+It provides a `get_area()` method which returns the area of the shape.
+It also provides a `move_to` method to move itself to an uninitialized storage.
+
+.ShapeMaxSize
+[source,cpp]
+----
+include::{Example1}[tag=ShapeMaxSize]
+----
+We choose an arbitrary size to store shapes. 
+
+.Shape
+[source,cpp]
+----
+include::{Example1}[tag=Shape]
+----
+We define `Shape` as an alias of `BoundedPolyVM<Storage, Base, Method>`, which is an alias to `BoundedPoly<Storage,Base,VirtualMover<Base, Method>>`.
+VM (Virtual Mover) means that we used a virtual method in order to make move operations.
+
+So `BoundedPoy<Storage,Base,Mover>` is instantiated with the following template parameters:
+
+* `Storage = std::aligned_storage_t<ShapeMaxSize>` : it can only stores shapes with `sizeof(_) pass:c[<=] ShapeMaxSize`.
+* `Base = IShape` : the polymorphic type abstracted
+* `Mover = VirtualMover<IShape, &IShape::move_to>` : we specify that to perform a move operation on `IShape`, we must call its virtual method `move_to`.
+
+.Circle
+[source,cpp]
+----
+include::{Example1}[tag=Circle]
+----
+We define `Circle` an implementation of `IShape` whose area is defined by _PI * radius²_.
+
+.Rectangle
+[source,cpp]
+----
+include::{Example1}[tag=Rectangle]
+----
+We define `Rectangle` an implementation of `IShape` whose are is defined by `width * height`.
+
+.RectangleEx
+[source,cpp]
+----
+include::{Example1}[tag=RectangleEx]
+----
+`RectangleEx` is an improvement of `Rectangle`.
+But its added members make its size too big to fit in `ShapeMaxSize` bytes.
+So it cannot be handled by `Shape`.
+
+.main
+[source,cpp]
+----
+include::{Example1}[tag=main]
+----
+<1> Construct-moving a `Circle` of radius 1.414 (about `sqrt(2)`).
+<2> `dynamic_cast` does not throw: it is really a `Circle` that is stored.
+<3> Emplacing in place a `Rectangle`. This is allowed because `Rectangle` is nothrow-constructible.
+<4> `dynamic_cast` does not throw: it is really a `Rectangle` that is stored.
+
+==== Complete source
+[source,cpp]
+----
+include::{Example1}[tags=**;*]
+----
+
+== Benchmark
+
+The benchmark compares the performances of `std::variant`, `std::unique_ptr` and `jv::utils::PolyStorage`. +
+The program generates a sequence of operations (Addition, Substraction and ExclusiveXor) to be applied on an `int`. +
+The sequence is stored in a `std::vector` with space reserved outside of the time measurements. +
+The type stored in `std::vector` is either a `std::variant`, a `std::unique_ptr` or a `jv::utils::PolyStorage`. +
+The operation is applied using the _visitor pattern_ for `std::variant` and polymorphic dispatch using `unique_ptr` and `PolyStorage`.
+
+We measure 2 things: time of constructing the sequence of operations, and time of evaluating the sequence of operations.
+These results are taken after compiling `bounded-poly.cpp`, `variant.cpp` and `unique-ptr.cpp` with `g++ -std=c++17 -O2`.
+Each result is taken as the minimum of three tries.
+The sequence contains 100'000'000 operations.
+
+.Benchmark results
+|===
+| Which | Construction timing | Evaluation timing
+
+| `std::unique_ptr` | 3.2718 seconds | 0.2755 seconds
+
+| `std::variant` | 1.2204 seconds | 0.1900 seconds
+
+| `jv::utils::BoundedPoly` | 1.4158 seconds | 0.1846 seconds
+
+|===
+
+We see that `unique_ptr` is the worse alternative both for construction and evaluation.
+This was expected, because at construction, it needs heap allocation, and at evaluation, it is not cache-friendly.
+
+We see that `variant` and `BoundedPoly` have similar performances.
+
+== Comparaisons
+
+.Syntax (CAUTION: this is highly opiniated)
+* I do prefer the calling syntax of polymorphism (as with `unique_ptr` and `BoundedPoly`), instead of `std::visit` and lambdas (as with `variant`).
+* `unique_ptr` and `variant` have minimal bloat code in the class definition.
+  For `BoundedPoly`, we needed to define a `move_to` operation for each derived class, which is indeed bloat code.
+  It is not needed, by using `UniversalMover` instead of `VirtualMover`, but this adds space cost (one function pointer per BoundedPoly).
+
+.Customization
+* `unique_ptr` is the most customizable, because it can stores any type derived from `Base`.
+* `variant` is the less customizable, because the types it accepts cannot be customized by a 3rd party.
+* `BoundedPoly` is a good compromise, types being bounded only by their size and alignment.
+
+.Storage
+* `unique_ptr` is heap allocated, so it is slow both to allocate and to access.
+* `variant` and `BoundedPoly` are stack allocated, si it is cache-friendly and does not require system calls for construction.
