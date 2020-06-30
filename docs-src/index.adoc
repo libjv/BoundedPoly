@@ -12,7 +12,10 @@ Julien Vernay
 :table-caption!:
 // Refs
 :SourceFile: src/jv/bounded-poly.hpp
-:Example1: examples/bounded-poly/shape.cpp
+:Example1: examples/shape.cpp
+
+This is the summary page for `jv::BoundedPoly`.
+To see the reference, go there: <<reference.adoc#>>.
 
 == Abstract
 `BoundedPoly<Storage, Base, Mover = ...>` is a type abstractor.

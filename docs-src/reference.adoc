@@ -16,7 +16,7 @@ Julien Vernay
 :cppref-TrivialType: link:https://en.cppreference.com/w/cpp/named_req/TrivialType[TrivialType]
 
 This is the reference page for `jv::BoundedPoly`.
-To see the summary and examples, go there: <<README.adoc#>>.
+To see the summary and examples, go there: <<index.adoc#>>.
 
 == Concepts
 
