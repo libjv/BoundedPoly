@@ -15,8 +15,8 @@ This allows to use both polymorphic-semantics and stack-allocation (and so, cach
 
 ## More details
 
-- index.hmtl to see examples, benchmarks results and motivations for this library.
-- reference.html to see the documentation reference.
+- [index.html](https://libjv.github.io/BoundedPoly/index.html) to see examples, benchmarks results and motivations for this library.
+- [reference.html](https://libjv.github.io/BoundedPoly/reference.html) to see the documentation reference.
 
 ## Build
 
